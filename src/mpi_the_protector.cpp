@@ -6,7 +6,9 @@
 #include <fstream>
 #include <iostream>
 #include <netdb.h>
+#include <semaphore.h>
 #include <string>
+#include <sys/mman.h>
 #include <utility>
 #include <vector>
 
@@ -44,20 +46,94 @@ void MPITheProtector::establish_connections() {
     std::getline(file, line);
     shared_mem = line == "0";
     std::getline(file, line);
+    total = std::stoi(line);
 
     if (shared_mem) {
         std::getline(file, line);
         shmname = line;
+        establish_shm();
         return;
     }
 
-    total = 0;
     std::vector<std::string> lines;
     while (std::getline(file, line)) {
         lines.push_back(line);
-        total++;
     }
     tcp_sockets.reserve(total);
+
+    establish_tcp(lines);
+}
+
+void MPITheProtector::establish_shm() {
+    shm_fd = shm_open(shmname.c_str(), O_CREAT | O_RDWR, 0666);
+    if (shm_fd == -1) {
+        std::cerr << "Failed to open shared memory: " << strerror(errno)
+                  << std::endl;
+        exit(1);
+    }
+    if (ftruncate(shm_fd, total * total * PAIR_SIZE) == -1) {
+        std::cerr << "Failed to truncate shared memory: " << strerror(errno)
+                  << std::endl;
+        exit(1);
+    }
+    shm_addr = mmap(nullptr, total * total * PAIR_SIZE, PROT_READ | PROT_WRITE,
+                    MAP_SHARED, shm_fd, 0);
+    if (shm_addr == MAP_FAILED) {
+        std::cerr << "Failed to map shared memory: " << strerror(errno)
+                  << std::endl;
+        exit(1);
+    }
+    for (int i = 0; i < total; i++) {
+        if (i == rank) {
+            continue;
+        }
+        sem_t *sem_sent = sem_open(
+            (shmname + std::to_string(rank * total + i) + "sent").c_str(),
+            O_CREAT, 0666, 1);
+        if (sem_sent == SEM_FAILED) {
+            std::cerr << "Failed to open semaphore: " << strerror(errno)
+                      << std::endl;
+            exit(1);
+        }
+        sem_t *sem_recd = sem_open(
+            (shmname + std::to_string(rank * total + i) + "recd").c_str(),
+            O_CREAT, 0666, 0);
+        if (sem_recd == SEM_FAILED) {
+            std::cerr << "Failed to open semaphore: " << strerror(errno)
+                      << std::endl;
+            exit(1);
+        }
+        semaphores_send.push_back(std::make_pair(sem_sent, sem_recd));
+        int values[2];
+        sem_getvalue(sem_sent, &values[0]);
+        sem_getvalue(sem_recd, &values[1]);
+        std::cout << "sem values: " << shmname << rank * total + i << ": "
+                  << values[0] << ", " << values[1] << std::endl;
+        sem_t *sem_sent1 =
+            sem_open((shmname + std::to_string(i * total + rank) + "sent").c_str(),
+                     O_CREAT, 0666, 1);
+        if (sem_sent1 == SEM_FAILED) {
+            std::cerr << "Failed to open semaphore: " << strerror(errno)
+                      << std::endl;
+            exit(1);
+        }
+        sem_t *sem_recd1 = sem_open(
+            (shmname + std::to_string(i * total + rank) + "recd").c_str(),
+            O_CREAT, 0666, 0);
+        if (sem_recd1 == SEM_FAILED) {
+            std::cerr << "Failed to open semaphore: " << strerror(errno)
+                      << std::endl;
+            exit(1);
+        }
+        semaphores_recv.push_back(std::make_pair(sem_sent1, sem_recd1));
+        sem_getvalue(sem_sent1, &values[0]);
+        sem_getvalue(sem_recd1, &values[1]);
+        std::cout << "sem values: " << shmname << i * total + rank << ": "
+                  << values[0] << ", " << values[1] << std::endl;
+    }
+}
+
+void MPITheProtector::establish_tcp(std::vector<std::string> &lines) {
     int i = 0;
 
     for (const auto &ip_line : lines) {
@@ -146,4 +222,8 @@ void MPITheProtector::establish_connections() {
         tcp_sockets.push_back(client_handler);
         i++;
     }
+}
+
+void MPITheProtector::wait_barrier() {
+    //
 }
