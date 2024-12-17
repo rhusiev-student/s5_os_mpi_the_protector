@@ -10,6 +10,9 @@
 #include <filesystem>
 #include <iostream>
 #include <string>
+#include <sys/epoll.h>
+#include <sys/poll.h>
+#include <sys/select.h>
 #include <utility>
 #include <vector>
 
@@ -22,11 +25,7 @@ class MPITheProtector {
     std::filesystem::path conf_name;
     bool shared_mem;
 
-    boost::asio::io_context io_context_send;
-    boost::asio::io_context io_context_accept;
-    tcp::resolver resolver;
-    std::vector<tcp::socket> tcp_sockets;
-    std::vector<std::pair<tcp::acceptor, tcp::socket>> accept;
+    std::vector<int> tcp_sockets;
 
     std::string shmname;
     int shm_fd;
@@ -35,50 +34,53 @@ class MPITheProtector {
     MPITheProtector(int &argc, char **(&argv));
     void establish_connections();
 
-    // template <typename T>
-    void get_data(int connection, int &obj) {
-        size_t buffer_size = sizeof(int);
-        // std::array<int, 1> *buffer = new std::array<int, 1>();
-        int *buffer = new int[1];
-        accept[connection].second.async_read_some(
-            boost::asio::buffer(buffer, sizeof(int)),
-            [buffer, &buffer_size, &obj](boost::system::error_code ec,
-                                 size_t bytes_transferred) {
-                if (ec) {
-                    std::cerr << "Error getting data: " << ec.message()
-                              << std::endl;
-                    exit(1);
-                }
-                if (bytes_transferred != buffer_size) {
-                    std::cerr << "Error getting data: wrong size" << std::endl;
-                    exit(1);
-                }
-                std::cout << "Received " << buffer[0] << std::endl;
-                memcpy(&obj, buffer, buffer_size);
-                delete[] buffer;
-            });
-        io_context_accept.run_one();
+    template <typename T> void get_data(int connection, T &obj) {
+        // for (int i = 0; i < total; i++) {
+        //     std::cout << "TCP socket " << i << ": " << tcp_sockets[i]
+        //               << std::endl;
+        // }
+        int buffer_size = sizeof(T);
+        int buffer;
+
+        int epoll_fd = epoll_create1(0);
+        if (epoll_fd < 0) {
+            std::cerr << "Failed to create epoll: " << strerror(errno)
+                      << std::endl;
+            exit(1);
+        }
+
+        epoll_event event[1];
+        event[0].events = EPOLLIN;
+        event[0].data.fd = tcp_sockets[connection];
+        epoll_ctl(epoll_fd, EPOLL_CTL_ADD, tcp_sockets[connection], &event[0]);
+
+        int ret = epoll_wait(epoll_fd, event, 1, -1);
+        if (ret < 0) {
+            std::cerr << "Failed to wait for event: " << strerror(errno)
+                      << std::endl;
+            exit(1);
+        }
+
+        recv(tcp_sockets[connection], &buffer, buffer_size, 0);
+
+        // std::cout << "Received " << buffer << std::endl;
+        obj = buffer;
     }
 
     template <typename T> void send_data(int connection, T &&obj) {
-        size_t buffer_size = sizeof(T);
-        std::array<T, 1> buffer = {obj};
-        // memcpy(buffer.data(), &obj, buffer_size);
-        tcp_sockets[connection].async_write_some(
-            boost::asio::buffer(buffer),
-            [&buffer_size](boost::system::error_code ec,
-                           size_t bytes_transferred) {
-                if (ec) {
-                    std::cerr << "Error sending data: " << ec.message()
-                              << std::endl;
-                    exit(1);
-                }
-                if (bytes_transferred != buffer_size) {
-                    std::cerr << "Error sending data: wrong size" << std::endl;
-                    exit(1);
-                }
-            });
-        io_context_send.run_one();
+        // for (int i = 0; i < total; i++) {
+        //     std::cout << "TCP socket " << i << ": " << tcp_sockets[i]
+        //               << std::endl;
+        // }
+        int buffer_size = sizeof(T);
+        auto result = send(tcp_sockets[connection], &obj, buffer_size, 0);
+        // std::cout << "fd: " << tcp_sockets[connection] << std::endl;
+        if (result < 0) {
+            std::cerr << "Failed to send data: " << strerror(errno)
+                      << std::endl;
+            exit(1);
+        }
+        // std::cout << "Sent " << obj << std::endl;
     }
 };
 

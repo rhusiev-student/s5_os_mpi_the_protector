@@ -1,15 +1,16 @@
 #include "./mpi_the_protector.hpp"
 #include "./args.hpp"
 #include <chrono>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <netdb.h>
 #include <string>
 #include <utility>
 #include <vector>
 
-MPITheProtector::MPITheProtector(int &argc, char **(&argv))
-    : resolver(io_context_send) {
+MPITheProtector::MPITheProtector(int &argc, char **(&argv)) {
     po::options_description opt_descr{"Usage: " + std::string(argv[0]) +
                                       " [-h|--help] <rank> <conf>"};
     opt_descr.add_options()("help,h", "Show help message");
@@ -28,6 +29,7 @@ MPITheProtector::MPITheProtector(int &argc, char **(&argv))
     }
 
     rank = std::stoi(unrecognized[0]);
+    // std::cout << "Rank " << rank << std::endl;
     conf_name = unrecognized[1];
     establish_connections();
 
@@ -56,61 +58,92 @@ void MPITheProtector::establish_connections() {
         total++;
     }
     tcp_sockets.reserve(total);
-    accept.reserve(total);
     int i = 0;
+
     for (const auto &ip_line : lines) {
-        tcp::acceptor acceptor(
-            io_context_accept,
-            tcp::endpoint(tcp::v4(), 12101 + rank * total + i));
-        accept.emplace_back(
-            std::make_pair(std::move(acceptor), tcp::socket(io_context_send)));
-        accept[i].first.async_accept(
-            accept[i].second,
-            [this, i, ip_line](boost::system::error_code ec) {
-                if (ec) {
-                    std::cerr << "Can't accept from " << i << " (" << ip_line
-                              << ":" << 12101 + rank * total + i
-                              << "): " << ec.message() << std::endl;
-                    exit(1);
-                }
-                std::cout << "I can accept from "
-                          << i << "(" << ip_line << ":"
-                          << 12101 + rank * total + i << ")" << std::endl;
-            });
-
-        tcp_sockets.emplace_back(io_context_send);
-        i++;
-    }
-
-    i = 0;
-    for (auto ip_line : lines) {
-        if (i == rank) {
+        if (i >= rank) {
             i++;
             continue;
         }
-        auto endpoint =
-            resolver.resolve(ip_line, std::to_string(12101 + i * total + rank));
-        int tries = 0;
-        while (tries < 10) {
-            try {
-                boost::asio::connect(tcp_sockets[i], endpoint);
-                break;
-            } catch (...) {
-                std::this_thread::sleep_for(std::chrono::milliseconds(500));
-                tries++;
-            }
-        }
-        if (tries == 10) {
-            std::cerr << "Couldn't connect to " << i << "(" << ip_line << ":"
-                      << 12101 + i * total + rank << ")" << std::endl;
+        addrinfo hints;
+        memset(&hints, 0, sizeof(hints));
+        hints.ai_family = AF_INET;
+        hints.ai_socktype = SOCK_STREAM;
+        hints.ai_flags = AI_NUMERICSERV;
+
+        addrinfo *to_connect;
+        if (getaddrinfo(ip_line.c_str(),
+                        std::to_string(12101 + rank * total + i).c_str(),
+                        &hints, &to_connect) != 0) {
+            std::cerr << "Failed to get address info" << std::endl;
             exit(1);
         }
-        std::cout << "I can access " << i << "("
-                  << ip_line << ":" << 12101 + i * total + rank << ")"
-                  << std::endl;
+
+        addrinfo *result_element;
+        int socket_descriptor;
+        for (result_element = to_connect; result_element != nullptr;
+             result_element = result_element->ai_next) {
+            socket_descriptor =
+                socket(result_element->ai_family, result_element->ai_socktype,
+                       result_element->ai_protocol);
+            if (socket_descriptor == -1) {
+                continue;
+            }
+            if (connect(socket_descriptor, result_element->ai_addr,
+                        result_element->ai_addrlen) != -1) {
+                break;
+            }
+            close(socket_descriptor);
+        }
+        if (result_element == nullptr) {
+            std::cerr << "Failed to connect" << std::endl;
+            exit(1);
+        }
+        // std::cout << "Connected to " << ip_line << ":"
+        //           << 12101 + rank * total + i << std::endl;
+        // std::cout << "Connected to " << socket_descriptor << std::endl;
+        tcp_sockets.push_back(socket_descriptor);
         i++;
     }
-    for (int j = 0; j < total - 1; j++) {
-        io_context_accept.run_one();
+
+    tcp_sockets.push_back(-1);
+
+    i = 0;
+    for (auto ip_line : lines) {
+        if (i <= rank) {
+            i++;
+            continue;
+        }
+        sockaddr_in server;
+        int socket_descriptor = socket(AF_INET, SOCK_STREAM, 0);
+        if (socket_descriptor == -1) {
+            std::cerr << "Socket creation error" << std::endl;
+            exit(1);
+        }
+        memset(&server, 0, sizeof(server));
+        server.sin_family = AF_INET;
+        server.sin_addr.s_addr = htonl(INADDR_ANY);
+        server.sin_port = htons(12101 + i * total + rank);
+
+        int result =
+            bind(socket_descriptor, (sockaddr *)&server, sizeof(server));
+        if (result == -1) {
+            std::cerr << "Bind error" << strerror(errno) << std::endl;
+            exit(1);
+        }
+        auto res = listen(socket_descriptor, 1);
+        if (res == -1) {
+            std::cerr << "Listen error" << strerror(errno) << std::endl;
+            exit(1);
+        }
+        // std::cout << "Listened on " << 12101 + i * total + rank << std::endl;
+        int client_handler = accept(socket_descriptor, 0, 0);
+        if (client_handler == -1) {
+            std::cerr << "Accept error" << strerror(errno) << std::endl;
+            exit(1);
+        }
+        close(socket_descriptor);
+        tcp_sockets.push_back(client_handler);
+        i++;
     }
 }
