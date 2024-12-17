@@ -145,7 +145,6 @@ class MPITheProtector {
             std::cerr << "Too big object" << std::endl;
             exit(1);
         }
-        std::cout << "Waiting for get semaphore " << shmname << connection * total + rank << "recd (" << semaphores_recv[connection].second << std::endl;
         int ret;
         while ((ret = sem_wait(semaphores_recv[connection].second)) == -1) {
             if (errno != EINTR) {
@@ -153,15 +152,12 @@ class MPITheProtector {
                           << std::endl;
                 exit(1);
             }
-            std::cout << "Err: " << strerror(errno) << std::endl;
         }
-        std::cout << "Grabbed get semaphore" << std::endl;
         memcpy(&obj,
                &(static_cast<int *>(
                    shm_addr)[(connection * total + rank) * PAIR_SIZE_INTS]),
                sizeof(T));
         sem_post(semaphores_recv[connection].first);
-        std::cout << "Released get semaphore " << shmname << connection * total + rank << "sent (" << semaphores_recv[connection].first << std::endl;
     }
 
     template <typename T> void send_data_shm(int connection, T &&obj) {
@@ -169,7 +165,6 @@ class MPITheProtector {
             std::cerr << "Too big object" << std::endl;
             exit(1);
         }
-        std::cout << "Waiting for semaphore " << shmname << rank * total + connection << "sent (" << semaphores_send[connection].first << std::endl;
 
         int ret;
         while ((ret = sem_wait(semaphores_send[connection].first)) == -1) {
@@ -178,48 +173,41 @@ class MPITheProtector {
                           << std::endl;
                 exit(1);
             }
-            std::cout << "Err: " << strerror(errno) << std::endl;
         }
-        std::cout << "Grabbed semaphore" << std::endl;
         memcpy(&(static_cast<int *>(
                    shm_addr)[(rank * total + connection) * PAIR_SIZE_INTS]),
                &obj, sizeof(T));
         sem_post(semaphores_send[connection].second);
-        std::cout << "Released semaphore " << shmname << rank * total + connection << "recd (" << semaphores_send[connection].second << std::endl;
     }
 
-    // ~MPITheProtector() {
-    //     if (shared_mem) {
-    //         // shm_unlink(shmname.c_str());
-    //         for (int i = 0; i < total; i++) {
-    //             if (i == rank) {
-    //                 continue;
-    //             }
-    //             // sem_close(semaphores_send[i].first);
-    //             // sem_close(semaphores_send[i].second);
-    //             // sem_close(semaphores_recv[i].first);
-    //             // sem_close(semaphores_recv[i].second);
-    //             // sem_unlink((shmname + std::to_string(rank * total + i) + "sent")
-    //             //                .c_str());
-    //             // sem_unlink((shmname + std::to_string(rank * total + i) + "recd")
-    //                            // .c_str());
-    //             // sem_unlink((shmname + std::to_string(i * total + rank) + "sent")
-    //             //                .c_str());
-    //             // sem_unlink((shmname + std::to_string(i * total + rank) + "recd")
-    //             //                .c_str());
-    //             std::cout << "removed: " << shmname + std::to_string(rank * total + i) + "sent" << std::endl;
-    //             // std::cout << "removed: " << shmname + std::to_string(rank * total + i) + "recd" << std::endl;
-    //             std::cout << "removed: " << shmname + std::to_string(i * total + rank) + "sent" << std::endl;
-    //             std::cout << "removed: " << shmname + std::to_string(i * total + rank) + "recd" << std::endl;
-    //         }
-    //         // munmap(shm_addr, total * total * PAIR_SIZE);
-    //         // close(shm_fd);
-    //     } else {
-    //         for (int i = 0; i < total; i++) {
-    //             close(tcp_sockets[i]);
-    //         }
-    //     }
-    // }
+    ~MPITheProtector() {
+        if (shared_mem) {
+            shm_unlink(shmname.c_str());
+            for (int i = 0; i < total; i++) {
+                if (i == rank) {
+                    continue;
+                }
+                sem_close(semaphores_send[i].first);
+                sem_close(semaphores_send[i].second);
+                sem_close(semaphores_recv[i].first);
+                sem_close(semaphores_recv[i].second);
+                sem_unlink((shmname + std::to_string(rank * total + i) + "sent")
+                               .c_str());
+                sem_unlink((shmname + std::to_string(rank * total + i) + "recd")
+                               .c_str());
+                sem_unlink((shmname + std::to_string(i * total + rank) + "sent")
+                               .c_str());
+                sem_unlink((shmname + std::to_string(i * total + rank) + "recd")
+                               .c_str());
+            }
+            munmap(shm_addr, total * total * PAIR_SIZE);
+            close(shm_fd);
+        } else {
+            for (int i = 0; i < total; i++) {
+                close(tcp_sockets[i]);
+            }
+        }
+    }
 };
 
 #endif // INCLUDE_MPI_THE_PROTECTOR_HPP_

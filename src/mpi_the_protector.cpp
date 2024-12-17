@@ -83,8 +83,12 @@ void MPITheProtector::establish_shm() {
                   << std::endl;
         exit(1);
     }
+    semaphores_send.reserve(total);
+    semaphores_recv.reserve(total);
     for (int i = 0; i < total; i++) {
         if (i == rank) {
+            semaphores_send.emplace_back(nullptr, nullptr);
+            semaphores_recv.emplace_back(nullptr, nullptr);
             continue;
         }
         sem_t *sem_sent = sem_open(
@@ -103,7 +107,7 @@ void MPITheProtector::establish_shm() {
                       << std::endl;
             exit(1);
         }
-        semaphores_send.push_back(std::make_pair(sem_sent, sem_recd));
+        semaphores_send.emplace_back(sem_sent, sem_recd);
         int values[2];
         sem_getvalue(sem_sent, &values[0]);
         sem_getvalue(sem_recd, &values[1]);
@@ -125,7 +129,7 @@ void MPITheProtector::establish_shm() {
                       << std::endl;
             exit(1);
         }
-        semaphores_recv.push_back(std::make_pair(sem_sent1, sem_recd1));
+        semaphores_recv.emplace_back(sem_sent1, sem_recd1);
         sem_getvalue(sem_sent1, &values[0]);
         sem_getvalue(sem_recd1, &values[1]);
         std::cout << "sem values: " << shmname << i * total + rank << ": "
