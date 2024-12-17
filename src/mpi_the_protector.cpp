@@ -226,6 +226,45 @@ void MPITheProtector::establish_tcp(std::vector<std::string> &lines) {
         tcp_sockets.push_back(client_handler);
         i++;
     }
+
+    // if (rank == total - 1) {
+    //
+    // }
+    // addrinfo hints;
+    // memset(&hints, 0, sizeof(hints));
+    // hints.ai_family = AF_INET;
+    // hints.ai_socktype = SOCK_STREAM;
+    // hints.ai_flags = AI_NUMERICSERV;
+    //
+    // addrinfo *to_connect;
+    // if (getaddrinfo(lines[rank].c_str(),
+    //                 std::to_string(10101 + rank * total + rank + 1).c_str(),
+    //                 &hints, &to_connect) != 0) {
+    //     std::cerr << "Failed to get address info" << std::endl;
+    //     exit(1);
+    // }
+    //
+    // addrinfo *result_element;
+    // int socket_descriptor;
+    // for (result_element = to_connect; result_element != nullptr;
+    //      result_element = result_element->ai_next) {
+    //     socket_descriptor =
+    //         socket(result_element->ai_family, result_element->ai_socktype,
+    //                result_element->ai_protocol);
+    //     if (socket_descriptor == -1) {
+    //         continue;
+    //     }
+    //     if (connect(socket_descriptor, result_element->ai_addr,
+    //                 result_element->ai_addrlen) != -1) {
+    //         break;
+    //     }
+    //     close(socket_descriptor);
+    // }
+    // if (result_element == nullptr) {
+    //     std::cerr << "Failed to connect" << std::endl;
+    //     exit(1);
+    // }
+    // tcp_barrier_socket = socket_descriptor;
 }
 
 void MPITheProtector::wait_barrier() {

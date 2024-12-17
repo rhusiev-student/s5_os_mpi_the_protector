@@ -34,6 +34,7 @@ class MPITheProtector {
     bool shared_mem;
 
     std::vector<int> tcp_sockets;
+    int tcp_barrier_socket;
 
     std::string shmname;
     int shm_fd;
